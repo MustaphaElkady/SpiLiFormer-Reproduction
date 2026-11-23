@@ -1,0 +1,80 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+envs/
+.env
+.env.*
+!.env.example
+
+# Dataset files and generated data
+*.aedat
+*.npz
+*.npy
+*.dat
+dataset/
+datasets/
+data/
+prepared/
+
+# Model checkpoints and exported weights
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# Experiment outputs and TensorBoard
+experiments/
+outputs/
+checkpoints/
+runs/
+tensorboard/
+*_logs/
+
+# Logs and Slurm output
+logs/
+*.log
+*.out
+*.err
+slurm-*.out
+
+# HPC / scheduler files (kept on the private cluster environment)
+*.sbatch
+*.slurm
+*.pbs
+hpc/
+hpc_*/
+.hpc/
+
+# HPC quota, storage, and local audit reports
+storage-check-*.txt
+storage_check-*.txt
+quota-*.txt
+quota_*.txt
+hardware-*.txt
+env-probe-*.txt
+
+# Temporary and backup files
+*.tmp
+*.bak
+*.backup
+*.pre_resume.bak
+
+# Archives
+*.zip
+*.tar
+*.gz
+
+# OS files
+.DS_Store
+Thumbs.db
+
+audit_conversion.py
+pilot_conversion.py
