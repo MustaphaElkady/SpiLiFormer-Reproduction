@@ -19,6 +19,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 import autoaugment
+from factory import Betascheduler
 
 _seed_ = 2021
 import random
@@ -143,6 +144,7 @@ def parse_args():
                         help='Turn off mixup after this epoch, disabled if 0 (default: 0)')
     
 
+    parser.add_argument("--beta", default=[0.5, 0.8], type=float, nargs=2, metavar="N N")
     parser.add_argument("--aug", type=float, default=1.0)
 
     parser.add_argument('--backbone_frozen', action='store_true', default=False, 
@@ -195,7 +197,7 @@ def split_to_train_test_set(train_ratio: float, origin_dataset: torch.utils.data
 
 
 def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, scaler=None, 
-                    T_train=None, aug=None, trival_aug=None, mixup_fn=None):
+                    T_train=None, aug=None, trival_aug=None, mixup_fn=None, beta=0.5):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value}'))
@@ -230,12 +232,12 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
                 x1, feedback, tmp = model(image)
                 functional.reset_net(model)
                 output, recon_loss = model(tmp, second_forward=feedback)
-                loss = (0.5) * criterion(x1, target) + 0.5 * criterion(output, target) 
+                loss = (1-beta) * criterion(x1, target) + beta * criterion(output, target)
         else:
             x1, feedback, tmp = model(image)
             functional.reset_net(model)
             output, recon_loss = model(tmp, second_forward=feedback)
-            loss = (0.5) * criterion(x1, target) + 0.5 * criterion(output, target) 
+            loss = (1-beta) * criterion(x1, target) + beta * criterion(output, target)
 
         optimizer.zero_grad()
 
@@ -403,6 +405,13 @@ def main(args):
     start_epoch = 0
     model_without_ddp = model
 
+    if args.beta[0] != args.beta[1]:
+        beta_scheduler = Betascheduler(
+            args.beta[0], args.beta[1], num_epochs - start_epoch
+        )
+    else:
+        beta_scheduler = None
+
 
 
     if args.distributed:
@@ -454,6 +463,45 @@ def main(args):
         max_test_acc1 = checkpoint['max_test_acc1']
         test_acc5_at_max_test_acc1 = checkpoint['test_acc5_at_max_test_acc1']
 
+        saved_beta_state = checkpoint.get('beta_scheduler_state')
+
+        if beta_scheduler is not None:
+            if saved_beta_state is None:
+                raise RuntimeError(
+                    "Checkpoint has no Beta Scheduler state. "
+                    "Cannot safely resume this experiment."
+                )
+
+            if (
+                abs(saved_beta_state['initial'] - beta_scheduler.initial) > 1e-12
+                or abs(saved_beta_state['final'] - beta_scheduler.final) > 1e-12
+                or saved_beta_state['total_epochs'] != beta_scheduler.total_epochs
+            ):
+                raise RuntimeError("Beta Scheduler configuration mismatch.")
+
+            saved_epochs = int(saved_beta_state['current_epochs'])
+
+            if saved_epochs != checkpoint['epoch'] + 1:
+                raise RuntimeError("Invalid Beta Scheduler epoch state.")
+
+            expected_beta = (
+                beta_scheduler.initial
+                + (beta_scheduler.final - beta_scheduler.initial)
+                * saved_epochs / beta_scheduler.total_epochs
+            )
+
+            if abs(saved_beta_state['beta'] - expected_beta) > 1e-9:
+                raise RuntimeError("Invalid saved Beta value.")
+
+            beta_scheduler.currrent_epochs = saved_epochs
+            beta_scheduler.beta = saved_beta_state['beta']
+
+            print("Restored Beta:", beta_scheduler.get())
+            print("Beta Scheduler Epoch:", saved_epochs)
+
+        elif saved_beta_state is not None:
+            raise RuntimeError("Checkpoint Beta configuration mismatch.")
+
         print(f"RESUMED FROM EPOCH {args.start_epoch}")
 
     if args.test_only:
@@ -495,10 +543,18 @@ def main(args):
             mixup_fn.mixup_enabled = False
         
        
+        if beta_scheduler is not None:
+            beta = beta_scheduler.get()
+        else:
+            beta = args.beta[0]
+
         train_loss, train_acc1, train_acc5 = train_one_epoch(
             model, criterion_train, optimizer, data_loader, device, epoch,
             args.print_freq, scaler, args.T_train,
-            train_snn_aug, train_trivalaug, mixup_fn)
+            train_snn_aug, train_trivalaug, mixup_fn, beta=beta)
+
+        if beta_scheduler is not None:
+            beta_scheduler.step()
         
 
         
@@ -547,6 +603,16 @@ def main(args):
                 'args': args,
                 'max_test_acc1': max_test_acc1,
                 'test_acc5_at_max_test_acc1': test_acc5_at_max_test_acc1,
+                'beta_scheduler_state': (
+                    {
+                        'initial': beta_scheduler.initial,
+                        'final': beta_scheduler.final,
+                        'total_epochs': beta_scheduler.total_epochs,
+                        'current_epochs': beta_scheduler.currrent_epochs,
+                        'beta': beta_scheduler.get(),
+                    }
+                    if beta_scheduler is not None else None
+                ),
             }
 
             # Save latest checkpoint atomically after every epoch

@@ -1,0 +1,3 @@
+experiment,beta_initial,beta_final,epochs_completed,best_test_top1_percent,top5_at_best_top1_percent,final_test_top1_percent,final_test_top5_percent,final_test_loss,verification_status
+fixed_beta_0.5,0.5,0.5,,82.1,,79.6,,,provisional_recheck_original_log_and_checkpoint
+scheduled_beta_0.5_to_0.8,0.5,0.8,130,79.7,96.0,78.1,96.2,0.9330588867740025,verified_from_final_checkpoint_and_epoch_129_log
